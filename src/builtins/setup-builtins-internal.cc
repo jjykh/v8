@@ -48,11 +48,32 @@ Code* BuildWithMacroAssembler(Isolate* isolate,
   byte buffer[buffer_size];  // NOLINT(runtime/arrays)
   MacroAssembler masm(isolate, buffer, buffer_size, CodeObjectRequired::kYes);
   DCHECK(!masm.has_frame());
+
+#if V8_TARGET_ARCH_X64
+  Assembler::ExtraInfo extra;
+  if (FLAG_snapshot_asm_opt)
+    masm.set_extra(&extra);
+#endif
+
   generator(&masm);
   CodeDesc desc;
   masm.GetCode(isolate, &desc);
   Handle<Code> code =
       isolate->factory()->NewCode(desc, flags, masm.CodeObject());
+
+#if V8_TARGET_ARCH_X64
+  masm.update_extra();
+  if (extra.optimizable()) {
+    MacroAssembler masm(isolate, buffer, buffer_size, CodeObjectRequired::kYes);
+    extra.stage = 2;
+    masm.set_extra(&extra);
+
+    DCHECK(!masm.has_frame());
+    generator(&masm);
+    masm.GetCode(isolate, &desc);
+    code = isolate->factory()->NewCode(desc, flags, masm.CodeObject());
+  }
+#endif
   PostBuildProfileAndTracing(isolate, *code, s_name);
   return *code;
 }
@@ -88,10 +109,29 @@ Code* BuildWithCodeStubAssemblerJS(Isolate* isolate,
   Zone zone(isolate->allocator(), ZONE_NAME);
   const int argc_with_recv =
       (argc == SharedFunctionInfo::kDontAdaptArgumentsSentinel) ? 0 : argc + 1;
+  void *asm_extra = nullptr;
+
+#if V8_TARGET_ARCH_X64
+  Assembler::ExtraInfo extra;
+  if (FLAG_snapshot_asm_opt)
+    asm_extra = &extra;
+#endif
+
   compiler::CodeAssemblerState state(isolate, &zone, argc_with_recv, flags,
                                      name);
   generator(&state);
-  Handle<Code> code = compiler::CodeAssembler::GenerateCode(&state);
+  Handle<Code> code = compiler::CodeAssembler::GenerateCode(&state, asm_extra);
+
+#if V8_TARGET_ARCH_X64
+  if (extra.optimizable()) {
+    compiler::CodeAssemblerState state(isolate, &zone, argc_with_recv, flags,
+                                     name);
+    generator(&state);
+    extra.stage = 2;
+    code = compiler::CodeAssembler::GenerateCode(&state, &extra);
+  }
+#endif
+
   PostBuildProfileAndTracing(isolate, *code, name);
   return *code;
 }
@@ -112,10 +152,29 @@ Code* BuildWithCodeStubAssemblerCS(Isolate* isolate,
   CallInterfaceDescriptor descriptor(isolate, interface_descriptor);
   // Ensure descriptor is already initialized.
   DCHECK_LE(0, descriptor.GetRegisterParameterCount());
+  void *asm_extra = nullptr;
+
+#if V8_TARGET_ARCH_X64
+  Assembler::ExtraInfo extra;
+  if (FLAG_snapshot_asm_opt)
+    asm_extra = &extra;
+#endif
+
   compiler::CodeAssemblerState state(isolate, &zone, descriptor, flags, name,
                                      result_size);
   generator(&state);
-  Handle<Code> code = compiler::CodeAssembler::GenerateCode(&state);
+  Handle<Code> code = compiler::CodeAssembler::GenerateCode(&state, asm_extra);
+
+#if V8_TARGET_ARCH_X64
+  if (extra.optimizable()) {
+    compiler::CodeAssemblerState state(isolate, &zone, descriptor, flags, name,
+                                     result_size);
+    generator(&state);
+    extra.stage = 2;
+    code = compiler::CodeAssembler::GenerateCode(&state, &extra);
+  }
+#endif
+
   PostBuildProfileAndTracing(isolate, *code, name);
   return *code;
 }

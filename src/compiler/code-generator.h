@@ -83,7 +83,7 @@ class CodeGenerator final : public GapResolver::Assembler {
   // Generate native code. After calling AssembleCode, call FinalizeCode to
   // produce the actual code object. If an error occurs during either phase,
   // FinalizeCode returns a null handle.
-  void AssembleCode();
+  void AssembleCode(void* asm_extra = nullptr);
   Handle<Code> FinalizeCode();
 
   InstructionSequence* code() const { return code_; }

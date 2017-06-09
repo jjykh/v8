@@ -130,6 +130,12 @@ Handle<Code> PlatformCodeStub::GenerateCode() {
   // Generate the new code.
   MacroAssembler masm(isolate(), NULL, 256, CodeObjectRequired::kYes);
 
+#if V8_TARGET_ARCH_X64
+  Assembler::ExtraInfo extra;
+  if (FLAG_snapshot_asm_opt)
+    masm.set_extra(&extra);
+#endif
+
   {
     // Update the static counter each time a new code stub is generated.
     isolate()->counters()->code_stubs()->Increment();
@@ -149,6 +155,30 @@ Handle<Code> PlatformCodeStub::GenerateCode() {
   Code::Flags flags = Code::ComputeFlags(GetCodeKind(), GetExtraICState());
   Handle<Code> new_object = factory->NewCode(
       desc, flags, masm.CodeObject(), NeedsImmovableCode());
+
+#if V8_TARGET_ARCH_X64
+  masm.update_extra();
+  if (extra.optimizable()) {
+    MacroAssembler masm(isolate(), NULL, 256, CodeObjectRequired::kYes);
+    extra.stage = 2;
+    masm.set_extra(&extra);
+
+    {
+      // Generate the code for the stub.
+      masm.set_generating_stub(true);
+      // TODO(yangguo): remove this once we can serialize IC stubs.
+      masm.enable_serializer();
+      NoCurrentFrameScope scope2(&masm);
+      Generate(&masm);
+    }
+
+    // Create the code object.
+    masm.GetCode(isolate(), &desc);
+    // Copy the generated code into a heap object.
+    new_object = factory->NewCode(
+        desc, flags, masm.CodeObject(), NeedsImmovableCode());
+  }
+#endif
   return new_object;
 }
 
@@ -434,11 +464,31 @@ void CompareICStub::Generate(MacroAssembler* masm) {
 Handle<Code> TurboFanCodeStub::GenerateCode() {
   const char* name = CodeStub::MajorName(MajorKey());
   Zone zone(isolate()->allocator(), ZONE_NAME);
+  void *asm_extra = nullptr;
+
+#if V8_TARGET_ARCH_X64
+  Assembler::ExtraInfo extra;
+  if (FLAG_snapshot_asm_opt)
+    asm_extra = &extra;
+#endif
+
   CallInterfaceDescriptor descriptor(GetCallInterfaceDescriptor());
   compiler::CodeAssemblerState state(isolate(), &zone, descriptor,
                                      GetCodeFlags(), name);
   GenerateAssembly(&state);
-  return compiler::CodeAssembler::GenerateCode(&state);
+  Handle<Code> code = compiler::CodeAssembler::GenerateCode(&state, asm_extra);
+
+#if V8_TARGET_ARCH_X64
+  if (extra.optimizable()) {
+    CallInterfaceDescriptor descriptor(GetCallInterfaceDescriptor());
+    compiler::CodeAssemblerState state(isolate(), &zone, descriptor,
+                                    GetCodeFlags(), name);
+    GenerateAssembly(&state);
+    extra.stage = 2;
+    code = compiler::CodeAssembler::GenerateCode(&state, &extra);
+  }
+#endif
+  return code;
 }
 
 TF_STUB(ElementsTransitionAndStoreStub, CodeStubAssembler) {

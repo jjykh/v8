@@ -496,6 +496,25 @@ class Assembler : public AssemblerBase {
   // Assembler functions are invoked in between GetCode() calls.
   void GetCode(Isolate* isolate, CodeDesc* desc);
 
+  // Extra information for Two-pass assembler
+  struct ExtraInfo {
+    std::vector<bool> optimizable_farjmp;
+    bool has_optimizable_farjmp = false;
+    int stage = 1;
+
+    bool is_optimizable_farjmp (int index) {
+      DCHECK(index < (int) optimizable_farjmp.size());
+      return optimizable_farjmp[index];
+    }
+    bool optimizable() {
+      return has_optimizable_farjmp;
+    }
+  };
+
+  void set_extra(void *e) { extra_ = (ExtraInfo *)e; }
+  ExtraInfo *extra() const { return extra_; }
+  void update_extra();
+
   // Read/Modify the code target in the relative branch/call instruction at pc.
   // On the x64 architecture, we use relative jumps with a 32-bit displacement
   // to jump to other Code objects in the Code space in the heap.
@@ -693,6 +712,9 @@ class Assembler : public AssemblerBase {
   // Move the offset of the label location relative to the current
   // position (after the move) to the destination.
   void movl(const Operand& dst, Label* src);
+
+  // Loads a 32-bit immediate into a register.
+  void movd(Register dst, int32_t value);
 
   // Loads a pointer into a register with a relocation mode.
   void movp(Register dst, void* ptr, RelocInfo::Mode rmode);
@@ -2513,6 +2535,14 @@ class Assembler : public AssemblerBase {
   std::deque<int> internal_reference_positions_;
 
   List< Handle<Code> > code_targets_;
+
+  // Two-pass assembler
+  ExtraInfo *extra_ = nullptr;
+  std::vector<int> farjmp_pos_;
+  int farjmp_num_ = 0;
+  std::map<Label*, std::vector<int>*> label_farjmp_map_;
+
+  void record_near_jmp(Label *L, int32_t pos);
 };
 
 

@@ -149,6 +149,7 @@ char* GetExtraCode(char* filename, const char* description) {
 int main(int argc, char** argv) {
   // Make mksnapshot runs predictable to create reproducible snapshots.
   i::FLAG_predictable = true;
+  i::FLAG_snapshot_asm_opt = true;
 
   // Print the usage if an error occurs when parsing the command line
   // flags or if the help flag is set.

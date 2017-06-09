@@ -75,8 +75,12 @@ void CodeGenerator::CreateFrameAccessState(Frame* frame) {
   frame_access_state_ = new (code()->zone()) FrameAccessState(frame);
 }
 
-void CodeGenerator::AssembleCode() {
+void CodeGenerator::AssembleCode(void* asm_extra) {
   CompilationInfo* info = this->info();
+
+#if V8_TARGET_ARCH_X64
+  masm()->set_extra(asm_extra);
+#endif
 
   // Open a frame scope to indicate that there is a frame on the stack.  The
   // MANUAL indicates that the scope shouldn't actually generate code to set up
@@ -218,6 +222,10 @@ void CodeGenerator::AssembleCode() {
 
   safepoints()->Emit(masm(), frame()->GetTotalFrameSlotCount());
   result_ = kSuccess;
+
+#if V8_TARGET_ARCH_X64
+  masm()->update_extra();
+#endif
 }
 
 Handle<Code> CodeGenerator::FinalizeCode() {

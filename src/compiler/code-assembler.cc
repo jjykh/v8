@@ -149,14 +149,15 @@ void CodeAssembler::CallEpilogue() {
 }
 
 // static
-Handle<Code> CodeAssembler::GenerateCode(CodeAssemblerState* state) {
+Handle<Code> CodeAssembler::GenerateCode(CodeAssemblerState* state,
+                                         void* asm_extra) {
   DCHECK(!state->code_generated_);
 
   RawMachineAssembler* rasm = state->raw_assembler_.get();
   Schedule* schedule = rasm->Export();
   Handle<Code> code = Pipeline::GenerateCodeForCodeStub(
       rasm->isolate(), rasm->call_descriptor(), rasm->graph(), schedule,
-      state->flags_, state->name_);
+      state->flags_, state->name_, asm_extra);
 
   state->code_generated_ = true;
   return code;

@@ -5,6 +5,7 @@
 #include "src/interpreter/setup-interpreter.h"
 
 #include "src/handles-inl.h"
+#include "src/interpreter/interpreter-assembler.h"
 #include "src/interpreter/bytecodes.h"
 #include "src/interpreter/interpreter-generator.h"
 #include "src/interpreter/interpreter.h"
@@ -85,7 +86,23 @@ void SetupInterpreter::InstallBytecodeHandler(Isolate* isolate,
   if (ReuseExistingHandler(dispatch_table, bytecode, operand_scale)) return;
 
   size_t index = Interpreter::GetDispatchTableIndex(bytecode, operand_scale);
-  Handle<Code> code = GenerateBytecodeHandler(isolate, bytecode, operand_scale);
+  void *asm_extra = nullptr;
+
+#if V8_TARGET_ARCH_X64
+  Assembler::ExtraInfo extra;
+  if (FLAG_snapshot_asm_opt)
+    asm_extra = &extra;
+#endif
+
+  Handle<Code> code =
+      GenerateBytecodeHandler(isolate, bytecode, operand_scale, asm_extra);
+
+#if V8_TARGET_ARCH_X64
+  if (extra.optimizable()) {
+    extra.stage = 2;
+    code = GenerateBytecodeHandler(isolate, bytecode, operand_scale, &extra);
+  }
+#endif
   dispatch_table[index] = code->entry();
 }
 

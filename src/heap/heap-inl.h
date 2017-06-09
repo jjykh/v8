@@ -785,7 +785,8 @@ int Heap::NextScriptId() {
 }
 
 void Heap::SetArgumentsAdaptorDeoptPCOffset(int pc_offset) {
-  DCHECK(arguments_adaptor_deopt_pc_offset() == Smi::kZero);
+  DCHECK(arguments_adaptor_deopt_pc_offset() == Smi::kZero ||
+         FLAG_snapshot_asm_opt);
   set_arguments_adaptor_deopt_pc_offset(Smi::FromInt(pc_offset));
 }
 
@@ -793,7 +794,8 @@ void Heap::SetConstructStubCreateDeoptPCOffset(int pc_offset) {
   // TODO(tebbi): Remove second half of DCHECK once
   // FLAG_harmony_restrict_constructor_return is gone.
   DCHECK(construct_stub_create_deopt_pc_offset() == Smi::kZero ||
-         construct_stub_create_deopt_pc_offset() == Smi::FromInt(pc_offset));
+         construct_stub_create_deopt_pc_offset() == Smi::FromInt(pc_offset) ||
+         FLAG_snapshot_asm_opt);
   set_construct_stub_create_deopt_pc_offset(Smi::FromInt(pc_offset));
 }
 
@@ -801,22 +803,26 @@ void Heap::SetConstructStubInvokeDeoptPCOffset(int pc_offset) {
   // TODO(tebbi): Remove second half of DCHECK once
   // FLAG_harmony_restrict_constructor_return is gone.
   DCHECK(construct_stub_invoke_deopt_pc_offset() == Smi::kZero ||
-         construct_stub_invoke_deopt_pc_offset() == Smi::FromInt(pc_offset));
+         construct_stub_invoke_deopt_pc_offset() == Smi::FromInt(pc_offset) ||
+         FLAG_snapshot_asm_opt);
   set_construct_stub_invoke_deopt_pc_offset(Smi::FromInt(pc_offset));
 }
 
 void Heap::SetGetterStubDeoptPCOffset(int pc_offset) {
-  DCHECK(getter_stub_deopt_pc_offset() == Smi::kZero);
+  DCHECK(getter_stub_deopt_pc_offset() == Smi::kZero ||
+         FLAG_snapshot_asm_opt);
   set_getter_stub_deopt_pc_offset(Smi::FromInt(pc_offset));
 }
 
 void Heap::SetSetterStubDeoptPCOffset(int pc_offset) {
-  DCHECK(setter_stub_deopt_pc_offset() == Smi::kZero);
+  DCHECK(setter_stub_deopt_pc_offset() == Smi::kZero ||
+         FLAG_snapshot_asm_opt);
   set_setter_stub_deopt_pc_offset(Smi::FromInt(pc_offset));
 }
 
 void Heap::SetInterpreterEntryReturnPCOffset(int pc_offset) {
-  DCHECK(interpreter_entry_return_pc_offset() == Smi::kZero);
+  DCHECK(interpreter_entry_return_pc_offset() == Smi::kZero ||
+         FLAG_snapshot_asm_opt);
   set_interpreter_entry_return_pc_offset(Smi::FromInt(pc_offset));
 }
 

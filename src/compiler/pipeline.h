@@ -51,7 +51,8 @@ class Pipeline : public AllStatic {
                                               CallDescriptor* call_descriptor,
                                               Graph* graph, Schedule* schedule,
                                               Code::Flags flags,
-                                              const char* debug_name);
+                                              const char* debug_name,
+                                              void* asm_extra = nullptr);
 
   // Run the entire pipeline and generate a handle to a code object suitable for
   // testing.

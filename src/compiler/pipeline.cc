@@ -410,14 +410,15 @@ class PipelineImpl final {
   bool OptimizeGraph(Linkage* linkage);
 
   // Run the code assembly pass.
-  void AssembleCode(Linkage* linkage);
+  void AssembleCode(Linkage* linkage, void* asm_extra = nullptr);
 
   // Run the code finalization pass.
   Handle<Code> FinalizeCode();
 
   bool ScheduleAndSelectInstructions(Linkage* linkage, bool trim_graph);
   void RunPrintAndVerify(const char* phase, bool untyped = false);
-  Handle<Code> ScheduleAndGenerateCode(CallDescriptor* call_descriptor);
+  Handle<Code> ScheduleAndGenerateCode(CallDescriptor* call_descriptor,
+                                       void* asm_extra = nullptr);
   void AllocateRegisters(const RegisterConfiguration* config,
                          CallDescriptor* descriptor, bool run_verifier);
 
@@ -1466,8 +1467,8 @@ struct JumpThreadingPhase {
 struct AssembleCodePhase {
   static const char* phase_name() { return "assemble code"; }
 
-  void Run(PipelineData* data, Zone* temp_zone) {
-    data->code_generator()->AssembleCode();
+  void Run(PipelineData* data, Zone* temp_zone, void* asm_extra = nullptr) {
+    data->code_generator()->AssembleCode(asm_extra);
   }
 };
 
@@ -1695,7 +1696,8 @@ Handle<Code> Pipeline::GenerateCodeForCodeStub(Isolate* isolate,
                                                CallDescriptor* call_descriptor,
                                                Graph* graph, Schedule* schedule,
                                                Code::Flags flags,
-                                               const char* debug_name) {
+                                               const char* debug_name,
+                                               void* asm_extra) {
   CompilationInfo info(CStrVector(debug_name), isolate, graph->zone(), flags);
   if (isolate->serializer_enabled()) info.PrepareForSerializing();
 
@@ -1729,7 +1731,7 @@ Handle<Code> Pipeline::GenerateCodeForCodeStub(Isolate* isolate,
   }
 
   pipeline.Run<VerifyGraphPhase>(false, true);
-  return pipeline.ScheduleAndGenerateCode(call_descriptor);
+  return pipeline.ScheduleAndGenerateCode(call_descriptor, asm_extra);
 }
 
 // static
@@ -1921,11 +1923,11 @@ bool PipelineImpl::ScheduleAndSelectInstructions(Linkage* linkage,
   return true;
 }
 
-void PipelineImpl::AssembleCode(Linkage* linkage) {
+void PipelineImpl::AssembleCode(Linkage* linkage, void* asm_extra) {
   PipelineData* data = this->data_;
   data->BeginPhaseKind("code generation");
   data->InitializeCodeGenerator(linkage);
-  Run<AssembleCodePhase>();
+  Run<AssembleCodePhase>(asm_extra);
 }
 
 Handle<Code> PipelineImpl::FinalizeCode() {
@@ -1971,14 +1973,14 @@ Handle<Code> PipelineImpl::FinalizeCode() {
 }
 
 Handle<Code> PipelineImpl::ScheduleAndGenerateCode(
-    CallDescriptor* call_descriptor) {
+    CallDescriptor* call_descriptor, void* asm_extra) {
   Linkage linkage(call_descriptor);
 
   // Schedule the graph, perform instruction selection and register allocation.
   if (!ScheduleAndSelectInstructions(&linkage, false)) return Handle<Code>();
 
   // Generate the final machine code.
-  AssembleCode(&linkage);
+  AssembleCode(&linkage, asm_extra);
   return FinalizeCode();
 }
 

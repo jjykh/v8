@@ -676,7 +676,7 @@ class LChunk : public ZoneObject {
 
   Zone* zone() const { return info_->zone(); }
 
-  Handle<Code> Codegen();
+  Handle<Code> Codegen(void *asm_extra = nullptr);
 
   void set_allocated_double_registers(BitVector* allocated_registers);
   BitVector* allocated_double_registers() {

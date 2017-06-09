@@ -872,8 +872,13 @@ class MacroAssembler: public Assembler {
   void PushReturnAddressFrom(Register src) { pushq(src); }
   void PopReturnAddressTo(Register dst) { popq(dst); }
   void Move(Register dst, ExternalReference ext) {
-    movp(dst, reinterpret_cast<void*>(ext.address()),
-         RelocInfo::EXTERNAL_REFERENCE);
+    auto adr = reinterpret_cast<intptr_t>(ext.address());
+    if (is_int32(adr) && !serializer_enabled()) {
+      movd(dst, (int32_t) adr);
+    }
+    else {
+      movp(dst, reinterpret_cast<void*>(adr), RelocInfo::EXTERNAL_REFERENCE);
+    }
   }
 
   // Loads a pointer into a register with a relocation mode.
@@ -881,7 +886,13 @@ class MacroAssembler: public Assembler {
     // This method must not be used with heap object references. The stored
     // address is not GC safe. Use the handle version instead.
     DCHECK(rmode > RelocInfo::LAST_GCED_ENUM);
-    movp(dst, ptr, rmode);
+    auto adr = reinterpret_cast<intptr_t>(ptr);
+    if (is_int32(adr) && !serializer_enabled()) {
+      movd(dst, (int32_t) adr);
+    }
+    else {
+      movp(dst, ptr, rmode);
+    }
   }
 
   void Move(Register dst, Handle<Object> value, RelocInfo::Mode rmode) {

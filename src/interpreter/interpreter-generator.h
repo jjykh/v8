@@ -13,7 +13,8 @@ namespace internal {
 namespace interpreter {
 
 extern Handle<Code> GenerateBytecodeHandler(Isolate* isolate, Bytecode bytecode,
-                                            OperandScale operand_scale);
+                                            OperandScale operand_scale,
+                                            void* asm_extra = nullptr);
 
 }  // namespace interpreter
 }  // namespace internal

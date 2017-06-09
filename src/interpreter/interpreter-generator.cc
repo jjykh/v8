@@ -3528,7 +3528,8 @@ IGNITION_HANDLER(RestoreGeneratorRegisters, InterpreterAssembler) {
 }  // namespace
 
 Handle<Code> GenerateBytecodeHandler(Isolate* isolate, Bytecode bytecode,
-                                     OperandScale operand_scale) {
+                                     OperandScale operand_scale,
+                                     void* asm_extra) {
   Zone zone(isolate->allocator(), ZONE_NAME);
   InterpreterDispatchDescriptor descriptor(isolate);
   compiler::CodeAssemblerState state(
@@ -3544,7 +3545,7 @@ Handle<Code> GenerateBytecodeHandler(Isolate* isolate, Bytecode bytecode,
 #undef CALL_GENERATOR
   }
 
-  Handle<Code> code = compiler::CodeAssembler::GenerateCode(&state);
+  Handle<Code> code = compiler::CodeAssembler::GenerateCode(&state, asm_extra);
   PROFILE(isolate, CodeCreateEvent(
                        CodeEventListener::BYTECODE_HANDLER_TAG,
                        AbstractCode::cast(*code),

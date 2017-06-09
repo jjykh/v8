@@ -281,7 +281,7 @@ Handle<Code> HydrogenCodeStub::GenerateRuntimeTailCall(
 }
 
 template <class Stub>
-static Handle<Code> DoGenerateCode(Stub* stub) {
+static Handle<Code> DoGenerateCode(Stub* stub, void *asm_extra) {
   Isolate* isolate = stub->isolate();
   CodeStubDescriptor descriptor(stub);
 
@@ -311,13 +311,30 @@ static Handle<Code> DoGenerateCode(Stub* stub) {
   info.set_parameter_count(parameter_count);
   CodeStubGraphBuilder<Stub> builder(&info, stub);
   LChunk* chunk = OptimizeGraph(builder.CreateGraph());
-  Handle<Code> code = chunk->Codegen();
+  Handle<Code> code = chunk->Codegen(asm_extra);
   if (FLAG_profile_hydrogen_code_stub_compilation) {
     OFStream os(stdout);
     os << "[Lazy compilation of " << stub << " took "
        << timer.Elapsed().InMillisecondsF() << " ms]" << std::endl;
   }
   return code;
+}
+
+template <class Stub>
+static Handle<Code> DoGenerateCode(Stub* stub) {
+#if V8_TARGET_ARCH_X64
+  if (FLAG_snapshot_asm_opt) {
+    Assembler::ExtraInfo extra;
+    Handle<Code> code = DoGenerateCode(stub, &extra);
+
+    if (extra.optimizable()) {
+      extra.stage = 2;
+      code = DoGenerateCode(stub, &extra);
+    }
+    return code;
+  }
+#endif
+  return DoGenerateCode(stub, nullptr);
 }
 
 template <>

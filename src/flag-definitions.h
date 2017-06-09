@@ -1044,6 +1044,9 @@ DEFINE_STRING(startup_src, NULL,
 DEFINE_STRING(startup_blob, NULL,
               "Write V8 startup blob file. (mksnapshot only)")
 
+DEFINE_BOOL(snapshot_asm_opt, false,
+              "generate optimized builtin code of snapshot")
+
 // code-stubs-hydrogen.cc
 DEFINE_BOOL(profile_hydrogen_code_stub_compilation, false,
             "Print the time it takes to lazily compile hydrogen code stubs.")
