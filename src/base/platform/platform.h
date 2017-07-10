@@ -302,7 +302,7 @@ class V8_BASE_EXPORT VirtualMemory {
   // Reserves virtual memory containing an area of the given size that
   // is aligned per alignment. This may not be at the position returned
   // by address().
-  VirtualMemory(size_t size, size_t alignment);
+  VirtualMemory(size_t size, size_t alignment, bool hugetlb = false);
 
   // Construct a virtual memory by assigning it some already mapped address
   // and size.
@@ -334,7 +334,7 @@ class V8_BASE_EXPORT VirtualMemory {
   size_t size() { return size_; }
 
   // Commits real memory. Returns whether the operation succeeded.
-  bool Commit(void* address, size_t size, bool is_executable);
+  bool Commit(void* address, size_t size, bool is_executable, bool hugetlb = false);
 
   // Uncommit real memory.  Returns whether the operation succeeded.
   bool Uncommit(void* address, size_t size);
@@ -383,7 +383,7 @@ class V8_BASE_EXPORT VirtualMemory {
 
   static void* ReserveRegion(size_t size);
 
-  static bool CommitRegion(void* base, size_t size, bool is_executable);
+  static bool CommitRegion(void* base, size_t size, bool is_executable, bool hugetlb = false);
 
   static bool UncommitRegion(void* base, size_t size);
 

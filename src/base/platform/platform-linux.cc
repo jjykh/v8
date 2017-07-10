@@ -197,14 +197,27 @@ VirtualMemory::VirtualMemory() : address_(NULL), size_(0) {}
 VirtualMemory::VirtualMemory(size_t size)
     : address_(ReserveRegion(size)), size_(size) {}
 
-VirtualMemory::VirtualMemory(size_t size, size_t alignment)
+VirtualMemory::VirtualMemory(size_t size, size_t alignment, bool hugetlb)
     : address_(NULL), size_(0) {
   DCHECK((alignment % OS::AllocateAlignment()) == 0);
   size_t request_size =
       RoundUp(size + alignment, static_cast<intptr_t>(OS::AllocateAlignment()));
-  void* reservation =
-      mmap(OS::GetRandomMmapAddr(), request_size, PROT_NONE,
-           MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, kMmapFd, kMmapFdOffset);
+  void* reservation = MAP_FAILED;
+
+#if V8_OS_LINUX && V8_TARGET_ARCH_X64
+  if (hugetlb) {
+    reservation = mmap(0, RoundUp(size, OS::AllocateAlignment()), PROT_NONE,
+        MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_HUGETLB,
+        kMmapFd, kMmapFdOffset);
+    if (reservation != MAP_FAILED)
+      request_size = RoundUp(size, OS::AllocateAlignment());
+    else
+      fprintf(stderr, "No HugePage supported!\n");
+  }
+  if (reservation == MAP_FAILED)
+#endif
+  reservation = mmap(OS::GetRandomMmapAddr(), request_size, PROT_NONE,
+      MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, kMmapFd, kMmapFdOffset);
   if (reservation == MAP_FAILED) return;
 
   uint8_t* base = static_cast<uint8_t*>(reservation);
@@ -251,9 +264,9 @@ void VirtualMemory::Reset() {
   size_ = 0;
 }
 
-bool VirtualMemory::Commit(void* address, size_t size, bool is_executable) {
+bool VirtualMemory::Commit(void* address, size_t size, bool is_executable, bool hugetlb) {
   CHECK(InVM(address, size));
-  return CommitRegion(address, size, is_executable);
+  return CommitRegion(address, size, is_executable, hugetlb);
 }
 
 bool VirtualMemory::Uncommit(void* address, size_t size) {
@@ -280,11 +293,11 @@ void* VirtualMemory::ReserveRegion(size_t size) {
   return result;
 }
 
-bool VirtualMemory::CommitRegion(void* base, size_t size, bool is_executable) {
+bool VirtualMemory::CommitRegion(void* base, size_t size, bool is_executable, bool hugetlb) {
   int prot = PROT_READ | PROT_WRITE | (is_executable ? PROT_EXEC : 0);
-  if (MAP_FAILED == mmap(base, size, prot,
-                         MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, kMmapFd,
-                         kMmapFdOffset)) {
+  int flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED | (hugetlb ? MAP_NORESERVE | MAP_HUGETLB : 0);
+  if (MAP_FAILED == mmap(base, size, prot, flags, kMmapFd, kMmapFdOffset)) {
+    fprintf(stderr, "OOM: %d, @%p, %lu bytes\n", errno, base, size);
     return false;
   }
 

@@ -22,6 +22,12 @@
 #include "src/v8.h"
 #include "src/vm-state-inl.h"
 
+#if V8_OS_LINUX && V8_TARGET_ARCH_X64
+#include <sys/mman.h>   // mmap & munmap
+#include <sys/types.h>  // mmap & munmap
+#include <unistd.h>     // sysconf
+#endif
+
 namespace v8 {
 namespace internal {
 
@@ -124,7 +130,11 @@ bool CodeRange::SetUp(size_t requested) {
 
   code_range_ = new base::VirtualMemory(
       requested, Max(kCodeRangeAreaAlignment,
-                     static_cast<size_t>(base::OS::AllocateAlignment())));
+                     static_cast<size_t>(base::OS::AllocateAlignment()))
+#if V8_OS_LINUX && V8_TARGET_ARCH_X64
+      , true
+#endif
+      );
   CHECK(code_range_ != NULL);
   if (!code_range_->IsReserved()) {
     delete code_range_;
@@ -150,6 +160,25 @@ bool CodeRange::SetUp(size_t requested) {
   size_t size = code_range_->size() - (aligned_base - base) - reserved_area;
   allocation_list_.Add(FreeBlock(aligned_base, size));
   current_allocation_block_index_ = 0;
+
+#if V8_OS_LINUX && V8_TARGET_ARCH_X64
+  CHECK(reserved_area == 0);
+
+  const size_t hugepages = 2;
+  const size_t hpsize = hugepages * 0x200000;
+  if (code_range_->Commit(base, hpsize, true, true)) {
+    CHECK_EQ(munmap(base + hpsize, requested - hpsize), 0);
+    CHECK(mmap(base + hpsize, requested - hpsize, PROT_NONE, MAP_FIXED | MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0) != MAP_FAILED);
+    pre_alloc_length_ = hpsize;
+    fprintf(stderr, "HugePage: %p\n", (void*)base);
+  }
+  else {
+    CHECK_EQ(munmap(base, requested), 0);
+    fprintf(stderr, "CodeRange: %p, %p\n", (void*)base, (void*)(base + requested));
+    CHECK(mmap(base, requested, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0) != MAP_FAILED);
+    pre_alloc_length_ = 0;
+  }
+#endif
 
   LOG(isolate_, NewEvent("CodeRange", code_range_->address(), requested));
   return true;
@@ -221,6 +250,12 @@ Address CodeRange::AllocateRawMemory(const size_t requested_size,
   *allocated = current.size;
   DCHECK(*allocated <= current.size);
   DCHECK(IsAddressAligned(current.start, MemoryChunk::kAlignment));
+#if V8_OS_LINUX && V8_TARGET_ARCH_X64
+  if ((uintptr_t)current.start + current.size <= (uintptr_t)code_range_->address() + pre_alloc_length_) {
+    isolate_->heap()->memory_allocator()->UpdateAllocatedSpaceLimits(
+        current.start, current.size);
+  } else
+#endif
   if (!isolate_->heap()->memory_allocator()->CommitExecutableMemory(
           code_range_, current.start, commit_size, *allocated)) {
     *allocated = 0;
@@ -232,12 +267,21 @@ Address CodeRange::AllocateRawMemory(const size_t requested_size,
 
 
 bool CodeRange::CommitRawMemory(Address start, size_t length) {
+#if V8_OS_LINUX && V8_TARGET_ARCH_X64
+  if ((uintptr_t)start + length <= (uintptr_t)code_range_->address() + pre_alloc_length_)
+    return true;
+#endif
+
   return isolate_->heap()->memory_allocator()->CommitMemory(start, length,
                                                             EXECUTABLE);
 }
 
 
 bool CodeRange::UncommitRawMemory(Address start, size_t length) {
+#if V8_OS_LINUX && V8_TARGET_ARCH_X64
+  if ((uintptr_t)start + length <= (uintptr_t)code_range_->address() + pre_alloc_length_)
+    return true;
+#endif
   return code_range_->Uncommit(start, length);
 }
 
@@ -246,11 +290,21 @@ void CodeRange::FreeRawMemory(Address address, size_t length) {
   DCHECK(IsAddressAligned(address, MemoryChunk::kAlignment));
   base::LockGuard<base::Mutex> guard(&code_range_mutex_);
   free_list_.Add(FreeBlock(address, length));
+
+#if V8_OS_LINUX && V8_TARGET_ARCH_X64
+  if ((uintptr_t)address + length <= (uintptr_t)code_range_->address() + pre_alloc_length_)
+    return;
+#endif
   code_range_->Uncommit(address, length);
 }
 
 
 void CodeRange::TearDown() {
+#if V8_OS_LINUX && V8_TARGET_ARCH_X64
+  if (pre_alloc_length_ > 0)
+    code_range_->Uncommit(code_range_->address(), pre_alloc_length_);
+#endif
+
   delete code_range_;  // Frees all memory in the virtual memory range.
   code_range_ = NULL;
   base::LockGuard<base::Mutex> guard(&code_range_mutex_);

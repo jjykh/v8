@@ -1079,6 +1079,10 @@ class CodeRange {
   List<FreeBlock> allocation_list_;
   int current_allocation_block_index_;
 
+#if V8_OS_LINUX && V8_TARGET_ARCH_X64
+  size_t pre_alloc_length_;
+#endif
+
   DISALLOW_COPY_AND_ASSIGN(CodeRange);
 };
 
@@ -1359,6 +1363,10 @@ class V8_EXPORT_PRIVATE MemoryAllocator {
   MUST_USE_RESULT bool CommitExecutableMemory(base::VirtualMemory* vm,
                                               Address start, size_t commit_size,
                                               size_t reserved_size);
+
+  void UpdateAllocatedSpaceLimits(Address start, size_t size) {
+    UpdateAllocatedSpaceLimits (start, start + size);
+  }
 
   CodeRange* code_range() { return code_range_; }
   Unmapper* unmapper() { return &unmapper_; }
