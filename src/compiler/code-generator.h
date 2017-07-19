@@ -194,7 +194,23 @@ class CodeGenerator final : public GapResolver::Assembler {
   // =================== Jump table construction methods. ======================
   // ===========================================================================
 
-  class JumpTable;
+  class JumpTable final : public ZoneObject {
+   public:
+    JumpTable(JumpTable* next, Label** targets, size_t target_count)
+        : next_(next), targets_(targets), target_count_(target_count) {}
+
+    Label* label() { return &label_; }
+    JumpTable* next() const { return next_; }
+    Label** targets() const { return targets_; }
+    size_t target_count() const { return target_count_; }
+
+   private:
+    Label label_;
+    JumpTable* const next_;
+    Label** const targets_;
+    size_t const target_count_;
+  };
+
   // Adds a jump table that is emitted after the actual code.  Returns label
   // pointing to the beginning of the table.  {targets} is assumed to be static
   // or zone allocated.
@@ -254,6 +270,8 @@ class CodeGenerator final : public GapResolver::Assembler {
     DeoptimizeReason reason() const { return reason_; }
 
    private:
+    friend class v8::internal::CodeOptimizer;
+
     BailoutId bailout_id_;
     int translation_id_;
     int pc_offset_;
@@ -266,6 +284,7 @@ class CodeGenerator final : public GapResolver::Assembler {
     int pc_offset;
   };
 
+  friend class v8::internal::CodeOptimizer;
   friend class OutOfLineCode;
 
   FrameAccessState* frame_access_state_;

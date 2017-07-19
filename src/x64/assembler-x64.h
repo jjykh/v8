@@ -38,6 +38,7 @@
 #define V8_X64_ASSEMBLER_X64_H_
 
 #include <deque>
+#include <map>
 
 #include "src/assembler.h"
 #include "src/x64/sse-instr.h"
@@ -489,6 +490,15 @@ class Assembler : public AssemblerBase {
       : Assembler(IsolateData(isolate), buffer, buffer_size) {}
   Assembler(IsolateData isolate_data, void* buffer, int buffer_size);
   virtual ~Assembler() { }
+
+  // Record a location that could be adjust by post optimization
+  Assembler& AutoPatch(int *pc_loc);
+
+  // Disable post optimization for Crankshaft CodeGen
+  void DisableOptimization() { optimized_ = true; }
+
+  // Perform post optimization
+  void OptimizeCode();
 
   // GetCode emits any pending (non-emitted) code and fills the descriptor
   // desc. GetCode() is idempotent; it returns the same result if no other
@@ -2484,6 +2494,10 @@ class Assembler : public AssemblerBase {
   void bmi2l(SIMDPrefix pp, byte op, Register reg, Register vreg,
              const Operand& rm);
 
+  void get_code(CodeDesc* desc);
+  bool optimize_code(CodeDesc *desc, std::map<int, int>* pc_maps);
+
+  friend class CodeOptimizer;
   friend class CodePatcher;
   friend class EnsureSpace;
   friend class RegExpMacroAssemblerX64;
@@ -2496,8 +2510,22 @@ class Assembler : public AssemblerBase {
   // are already bound.
   std::deque<int> internal_reference_positions_;
 
+  bool optimized_ = false;
+  std::deque<int> far_jmp_positions_;
+  std::deque<int*> auto_patch_positions_;
+
   List< Handle<Code> > code_targets_;
 };
+
+namespace compiler {
+class CodeGenerator;
+}
+
+class CodeOptimizer {
+  public:
+    CodeOptimizer(compiler::CodeGenerator* gen);
+};
+
 
 
 // Helper class that ensures that there is enough space for generating

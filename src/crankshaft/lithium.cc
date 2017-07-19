@@ -449,6 +449,10 @@ LChunk* LChunk::NewChunk(HGraph* graph) {
 Handle<Code> LChunk::Codegen() {
   MacroAssembler assembler(info()->isolate(), NULL, 0,
                            CodeObjectRequired::kYes);
+#if V8_TARGET_ARCH_X64
+  assembler.DisableOptimization();
+#endif
+
   // Code serializer only takes unoptimized code.
   DCHECK(!info()->will_serialize());
   LCodeGen generator(this, &assembler, info());

@@ -1094,6 +1094,11 @@ void JSEntryStub::Generate(MacroAssembler* masm) {
   __ jmp(&invoke);
   __ bind(&handler_entry);
   handler_offset_ = handler_entry.pos();
+
+  if (FLAG_snapshot_asm_opt) {
+    __ AutoPatch(&handler_offset_);
+  }
+
   // Caught exception: Store result (exception) in the pending exception
   // field in the JSEnv and return a failure sentinel.
   ExternalReference pending_exception(Isolate::kPendingExceptionAddress,

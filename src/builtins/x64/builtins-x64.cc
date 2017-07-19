@@ -194,6 +194,8 @@ void Generate_JSConstructStubGeneric(MacroAssembler* masm,
   //  -- rsi: context
   //  -- sp[...]: constructor arguments
   // -----------------------------------
+  int loc_create;
+  int loc_invoke;
 
   // Enter a construct frame.
   {
@@ -237,8 +239,7 @@ void Generate_JSConstructStubGeneric(MacroAssembler* masm,
     //  -- Slot 0 / sp[3*kPointerSize]  context
     // -----------------------------------
     // Deoptimizer enters here.
-    masm->isolate()->heap()->SetConstructStubCreateDeoptPCOffset(
-        masm->pc_offset());
+    loc_create = masm->pc_offset();
     __ bind(&post_instantiation_deopt_entry);
 
     // Restore new target.
@@ -301,8 +302,7 @@ void Generate_JSConstructStubGeneric(MacroAssembler* masm,
     // -----------------------------------
 
     // Store offset of return address for deoptimizer.
-    masm->isolate()->heap()->SetConstructStubInvokeDeoptPCOffset(
-        masm->pc_offset());
+   loc_invoke = masm->pc_offset();
 
     // Restore context from the frame.
     __ movp(rsi, Operand(rbp, ConstructFrameConstants::kContextOffset));
@@ -361,6 +361,15 @@ void Generate_JSConstructStubGeneric(MacroAssembler* masm,
   __ leap(rsp, Operand(rsp, index.reg, index.scale, 1 * kPointerSize));
   __ PushReturnAddressFrom(rcx);
   __ ret(0);
+
+  if (FLAG_snapshot_asm_opt) {
+    __ AutoPatch(&loc_create)
+      .AutoPatch(&loc_invoke)
+      .OptimizeCode();
+  }
+
+  masm->isolate()->heap()->SetConstructStubCreateDeoptPCOffset(loc_create);
+  masm->isolate()->heap()->SetConstructStubInvokeDeoptPCOffset(loc_invoke);
 }
 }  // namespace
 
@@ -832,7 +841,7 @@ void Builtins::Generate_InterpreterEntryTrampoline(MacroAssembler* masm) {
   __ movp(rbx, Operand(kInterpreterDispatchTableRegister, rbx,
                        times_pointer_size, 0));
   __ call(rbx);
-  masm->isolate()->heap()->SetInterpreterEntryReturnPCOffset(masm->pc_offset());
+  int loc = masm->pc_offset();
 
   // The return value is in rax.
   LeaveInterpreterFrame(masm, rbx, rcx);
@@ -857,6 +866,12 @@ void Builtins::Generate_InterpreterEntryTrampoline(MacroAssembler* masm) {
   __ movp(FieldOperand(rdi, JSFunction::kCodeEntryOffset), rcx);
   __ RecordWriteCodeEntryField(rdi, rcx, r15);
   __ jmp(rcx);
+
+  if (FLAG_snapshot_asm_opt) {
+    __ AutoPatch(&loc)
+      .OptimizeCode();
+  }
+  masm->isolate()->heap()->SetInterpreterEntryReturnPCOffset(loc);
 }
 
 static void Generate_StackOverflowCheck(
@@ -2203,7 +2218,7 @@ void Builtins::Generate_ArgumentsAdaptorTrampoline(MacroAssembler* masm) {
   __ call(rcx);
 
   // Store offset of return address for deoptimizer.
-  masm->isolate()->heap()->SetArgumentsAdaptorDeoptPCOffset(masm->pc_offset());
+  int loc = masm->pc_offset();
 
   // Leave frame and return.
   LeaveArgumentsAdaptorFrame(masm);
@@ -2222,6 +2237,12 @@ void Builtins::Generate_ArgumentsAdaptorTrampoline(MacroAssembler* masm) {
     __ CallRuntime(Runtime::kThrowStackOverflow);
     __ int3();
   }
+
+  if (FLAG_snapshot_asm_opt) {
+    __ AutoPatch(&loc)
+      .OptimizeCode();
+  }
+  masm->isolate()->heap()->SetArgumentsAdaptorDeoptPCOffset(loc);
 }
 
 // static

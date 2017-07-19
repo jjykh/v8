@@ -18,23 +18,6 @@ namespace v8 {
 namespace internal {
 namespace compiler {
 
-class CodeGenerator::JumpTable final : public ZoneObject {
- public:
-  JumpTable(JumpTable* next, Label** targets, size_t target_count)
-      : next_(next), targets_(targets), target_count_(target_count) {}
-
-  Label* label() { return &label_; }
-  JumpTable* next() const { return next_; }
-  Label** targets() const { return targets_; }
-  size_t target_count() const { return target_count_; }
-
- private:
-  Label label_;
-  JumpTable* const next_;
-  Label** const targets_;
-  size_t const target_count_;
-};
-
 CodeGenerator::CodeGenerator(Frame* frame, Linkage* linkage,
                              InstructionSequence* code, CompilationInfo* info)
     : frame_access_state_(nullptr),
@@ -124,6 +107,11 @@ Handle<Code> CodeGenerator::GenerateCode() {
       if (block->IsDeferred() == (deferred == 0)) {
         continue;
       }
+
+#if V8_TARGET_ARCH_X64
+      if (!FLAG_snapshot_asm_opt)
+#endif
+
       // Align loop headers on 16-byte boundaries.
       if (block->IsLoopHeader()) masm()->Align(16);
       // Ensure lazy deopt doesn't patch handler entry points.

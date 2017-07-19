@@ -19,7 +19,9 @@
 #include "src/base/bits.h"
 #include "src/base/cpu.h"
 #include "src/macro-assembler.h"
+#include "src/disasm.h"
 #include "src/v8.h"
+#include "src/compiler/code-generator.h"
 
 namespace v8 {
 namespace internal {
@@ -309,8 +311,184 @@ Assembler::Assembler(IsolateData isolate_data, void* buffer, int buffer_size)
   reloc_info_writer.Reposition(buffer_ + buffer_size_, pc_);
 }
 
+struct X64Instr {
+  byte                    code[16];
+  int                     length: 8;
+  int                     pc: 24;
+  int                     new_pc;
+  std::vector<RelocInfo>  reloc;
 
-void Assembler::GetCode(CodeDesc* desc) {
+  bool is_call() { return code[0] == 0xe8; }
+  bool is_jmp32() { return code[0] == 0xe9; }
+  bool is_jmp8() { return code[0] == 0xeb; }
+  bool is_jcc32() { return code[0] == 0x0F && (code[1] & 0xF0) == 0x80; }
+  bool is_jcc8() { return (code[0] & 0xF0) == 0x70; }
+
+  bool no_special_reloc() const {
+    //return reloc.size() == 0;
+    for (auto &rinfo : reloc) {
+      if (!RelocInfo::IsComment(rinfo.rmode()) &&
+          !RelocInfo::IsNone(rinfo.rmode()))
+        return false;
+    }
+    return true;
+  }
+
+  bool between(const X64Instr &other, int disp) const {
+    int begin = other.new_pc;
+    int end = begin + other.length + disp;
+    if (begin > end) std::swap(begin, end);
+    return begin < new_pc && new_pc < end;
+  }
+};
+
+struct X64Code {
+  std::vector<X64Instr> instructions;
+
+  X64Instr& find_instr(int pc) {
+    int lo = 0, hi = (int) instructions.size() - 1;
+    while(lo <= hi) {
+      int m = (hi + lo) / 2;
+      int diff = pc - (int) instructions[m].pc;
+      if (diff == 0) return instructions[m];
+      if (diff < 0) hi = m - 1;
+      else lo = m + 1;
+    }
+    FATAL("BUG");
+    return instructions[0];
+  }
+
+  void apply_patch(const X64Instr& instr, int reduced) {
+    for (auto &i : instructions) {
+      if (&i == &instr) continue;
+
+      if (i.pc > instr.pc) {
+        i.new_pc -= reduced;
+        for (auto &rinfo : i.reloc)
+          rinfo.set_pc(rinfo.pc() - reduced);
+      }
+
+      if (i.is_call() || i.is_jmp32()) {
+        if (i.no_special_reloc()) {
+          int disp = Memory::int32_at(&i.code[1]);
+          if (instr.between(i, disp))
+            Memory::int32_at(&i.code[1]) = disp < 0 ? disp + reduced : disp - reduced;
+        }
+      }
+      else if (i.is_jmp8() || i.is_jcc8()) {
+        int disp = (int8_t) i.code[1];
+        if (instr.between(i, disp))
+          i.code[1] = disp < 0 ? disp + reduced : disp - reduced;
+      }
+      else if (i.is_jcc32()) {
+        if (i.no_special_reloc()) {
+          int disp = Memory::int32_at(&i.code[2]);
+          if (instr.between(i, disp))
+            Memory::int32_at(&i.code[2]) = disp < 0 ? disp + reduced : disp - reduced;
+        }
+      }
+    }
+  }
+};
+
+bool Assembler::optimize_code(CodeDesc *desc, std::map<int, int>* pc_maps)
+{
+  int num = 0;
+  for (size_t i = 0; i < far_jmp_positions_.size(); i++) {
+    int disp;
+    int pos = far_jmp_positions_[i];
+    byte opcode = byte_at(pos);
+    if (opcode == 0xE9) {
+      disp = long_at(pos + 1);
+    }
+    else if (opcode == 0x0F && (byte_at(pos + 1) & 0xf0) == 0x80) {
+      disp = long_at(pos + 2);
+    }
+    else {
+      // RecordWriteStub::Generate fills Nop
+      far_jmp_positions_[i] = -1;
+      continue;
+    }
+    if (is_int8(disp)) num++;
+  }
+
+  optimized_ = true;
+  if (num == 0) return false;
+
+  disasm::NameConverter converter;
+  disasm::Disassembler d(converter);
+  v8::internal::EmbeddedVector<char, 128> dis;
+  X64Code mc;
+
+  RelocIterator it(*desc);
+  for (byte *pc = buffer_; pc < pc_;) {
+    byte* prev_pc = pc;
+    pc += d.InstructionDecode(dis, pc);
+
+    X64Instr i;
+    i.pc = i.new_pc = (int)(prev_pc - buffer_);
+    i.length = (int)(pc - prev_pc);
+    memcpy(i.code, prev_pc, (int)(pc - prev_pc));
+
+    while (!it.done() && it.rinfo()->pc() < pc) {
+      i.reloc.push_back(*it.rinfo());
+      it.next();
+    }
+    mc.instructions.push_back(i);
+  }
+
+  for (size_t i = 0; i < far_jmp_positions_.size(); i++) {
+    int pos = far_jmp_positions_[i];
+    if (pos < 0) continue;
+
+    X64Instr &instr = mc.find_instr(pos);
+    if (instr.is_jmp32()) {
+      int disp = Memory::int32_at(&instr.code[1]);
+      if (!is_int8(disp)) continue;
+
+      instr.code[0] = 0xEB;
+      instr.code[1] = disp;
+      instr.length = 2;
+      mc.apply_patch(instr, 3);
+    }
+    else {
+      CHECK(instr.is_jcc32());
+      int disp = Memory::int32_at(&instr.code[2]);
+      if (!is_int8(disp)) continue;
+
+      instr.code[0] = 0x70 | (instr.code[1] & 0x0f);
+      instr.code[1] = disp;
+      instr.length = 2;
+      mc.apply_patch(instr, 4);
+    }
+
+    far_jmp_positions_[i] = -1;
+    i = 0;
+  }
+
+  // rewrite machine code & reloc
+  pc_ = buffer_;
+  reloc_info_writer.Reposition(buffer_ + buffer_size_, pc_);
+
+  for (auto &i : mc.instructions) {
+    if (pc_maps) (*pc_maps)[i.pc] = i.new_pc;
+
+    for (auto loc : auto_patch_positions_) {
+      if (*loc == i.pc)
+        *loc = i.new_pc;
+    }
+
+    memcpy(pc_, i.code, i.length);
+    pc_ += i.length;
+    for (auto &rinfo : i.reloc)
+      reloc_info_writer.Write(&rinfo);
+  }
+
+  far_jmp_positions_.clear();
+  return true;
+}
+
+void Assembler::get_code(CodeDesc* desc) {
   // Finalize code (at this point overflow() may be true, but the gap ensures
   // that we are still not overlapping instructions and relocation info).
   DCHECK(pc_ <= reloc_info_writer.pos());  // No overlap.
@@ -325,6 +503,28 @@ void Assembler::GetCode(CodeDesc* desc) {
   desc->constant_pool_size = 0;
   desc->unwinding_info_size = 0;
   desc->unwinding_info = nullptr;
+}
+
+void Assembler::GetCode(CodeDesc* desc) {
+  get_code(desc);
+
+  if (FLAG_snapshot_asm_opt && !optimized_ && optimize_code(desc, nullptr)) {
+    desc->instr_size = pc_offset();
+    desc->reloc_size =
+      static_cast<int>((buffer_ + buffer_size_) - reloc_info_writer.pos());
+  }
+}
+
+void Assembler::OptimizeCode()
+{
+  CodeDesc desc;
+  get_code(&desc);
+  optimize_code(&desc, nullptr);
+}
+
+Assembler& Assembler::AutoPatch(int *pc_loc) {
+  auto_patch_positions_.push_back(pc_loc);
+  return *this;
 }
 
 
@@ -1259,19 +1459,24 @@ void Assembler::j(Condition cc, Label* L, Label::Distance distance) {
     }
     L->link_to(pc_offset(), Label::kNear);
     emit(disp);
-  } else if (L->is_linked()) {
-    // 0000 1111 1000 tttn #32-bit disp.
-    emit(0x0F);
-    emit(0x80 | cc);
-    emitl(L->pos());
-    L->link_to(pc_offset() - sizeof(int32_t));
   } else {
-    DCHECK(L->is_unused());
-    emit(0x0F);
-    emit(0x80 | cc);
-    int32_t current = pc_offset();
-    emitl(current);
-    L->link_to(current);
+    if (FLAG_snapshot_asm_opt)
+      far_jmp_positions_.push_back(pc_offset());
+
+    if (L->is_linked()) {
+      // 0000 1111 1000 tttn #32-bit disp.
+      emit(0x0F);
+      emit(0x80 | cc);
+      emitl(L->pos());
+      L->link_to(pc_offset() - sizeof(int32_t));
+    } else {
+      DCHECK(L->is_unused());
+      emit(0x0F);
+      emit(0x80 | cc);
+      int32_t current = pc_offset();
+      emitl(current);
+      L->link_to(current);
+    }
   }
 }
 
@@ -1324,18 +1529,23 @@ void Assembler::jmp(Label* L, Label::Distance distance) {
     }
     L->link_to(pc_offset(), Label::kNear);
     emit(disp);
-  } else if (L->is_linked()) {
-    // 1110 1001 #32-bit disp.
-    emit(0xE9);
-    emitl(L->pos());
-    L->link_to(pc_offset() - long_size);
   } else {
-    // 1110 1001 #32-bit disp.
-    DCHECK(L->is_unused());
-    emit(0xE9);
-    int32_t current = pc_offset();
-    emitl(current);
-    L->link_to(current);
+    if (FLAG_snapshot_asm_opt)
+      far_jmp_positions_.push_back(pc_offset());
+
+    if (L->is_linked()) {
+      // 1110 1001 #32-bit disp.
+      emit(0xE9);
+      emitl(L->pos());
+      L->link_to(pc_offset() - long_size);
+    } else {
+      // 1110 1001 #32-bit disp.
+      DCHECK(L->is_unused());
+      emit(0xE9);
+      int32_t current = pc_offset();
+      emitl(current);
+      L->link_to(current);
+    }
   }
 }
 
@@ -4787,6 +4997,84 @@ bool RelocInfo::IsInConstantPool() {
   return false;
 }
 
+
+CodeOptimizer::CodeOptimizer(compiler::CodeGenerator* gen) {
+  std::map<int,int> pc_maps;
+  CodeDesc desc;
+  auto as = gen->masm();
+
+  as->get_code(&desc);
+  if (!as->optimize_code(&desc, &pc_maps))
+    return;
+
+  // NEED NOT to pach source_position_table_builder
+
+  // NEED NOT to patch unwinding_info_writer
+  CHECK(!FLAG_perf_prof_unwinding_info);
+
+  // patch safepoints
+  auto safepoints = gen->safepoints();
+  for (int i = 0; i < safepoints->deoptimization_info_.length(); i++) {
+    int pc = safepoints->deoptimization_info_[i].pc;
+    int new_pc = pc_maps[pc];
+
+    CHECK(new_pc <= pc);
+    safepoints->deoptimization_info_[i].pc = new_pc;
+  }
+
+  std::set<Label*> patched;
+
+  // patch jump_tables
+  for (auto t = gen->jump_tables_; t; t = t->next()) {
+    auto label = t->label();
+    auto targets = t->targets();
+    for (size_t index = 0; index < t->target_count(); ++index) {
+      CHECK_EQ(true, targets[index]->is_bound());
+      if (patched.find(targets[index]) == patched.end()) {
+        int pc = targets[index]->pos();
+        int new_pc = pc_maps[pc];
+        targets[index]->bind_to(new_pc);
+        patched.insert(targets[index]);
+      }
+    }
+
+    CHECK_EQ(false, label->is_near_linked());
+    CHECK_EQ(true, label->is_linked());
+
+    int current = label->pos();
+    int np = pc_maps[current - 3] + 3;
+    CHECK_EQ(0x4c, as->byte_at(np - 3));  // lea r10, [rip + table]
+    CHECK_EQ(0x8d, as->byte_at(np - 2));
+    CHECK_EQ(0x15, as->byte_at(np - 1));
+
+    int next = as->long_at(np);
+    CHECK_EQ(current, next);          // only one reference
+
+    as->long_at_put(np, np);
+    label->link_to(np);
+  }
+
+  // patch exception handler table.
+  for (size_t i = 0; i < gen->handlers_.size(); ++i) {
+    auto &h = gen->handlers_[i];
+    int new_pc = pc_maps[h.pc_offset];
+    h.pc_offset = new_pc;
+
+    CHECK_EQ(true, h.handler->is_bound());
+    if (patched.find(h.handler) == patched.end()) {
+      new_pc = pc_maps[h.handler->pos()];
+      h.handler->bind_to(new_pc);
+      patched.insert(h.handler);
+    }
+  }
+
+  // patch deoptimization
+  for (size_t i = 0; i < gen->deoptimization_states_.size(); i++) {
+    int pc = gen->deoptimization_states_[i]->pc_offset_;
+    int new_pc = pc_maps[pc];
+    gen->deoptimization_states_[i]->pc_offset_ = new_pc;
+  }
+}
 
 }  // namespace internal
 }  // namespace v8

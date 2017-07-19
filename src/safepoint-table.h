@@ -228,6 +228,8 @@ class SafepointTableBuilder BASE_EMBEDDED {
 
   Zone* zone_;
 
+  friend class CodeOptimizer;
+
   DISALLOW_COPY_AND_ASSIGN(SafepointTableBuilder);
 };
 

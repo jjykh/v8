@@ -75,6 +75,7 @@ class Label {
     }
   }
 
+  friend class CodeOptimizer;
   friend class Assembler;
   friend class Displacement;
   friend class RegExpMacroAssemblerIrregexp;

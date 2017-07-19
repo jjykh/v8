@@ -2862,6 +2862,7 @@ void CodeGenerator::AssembleConstructFrame() {
     // remaining stack slots.
     if (FLAG_code_comments) __ RecordComment("-- OSR entrypoint --");
     osr_pc_offset_ = __ pc_offset();
+    if (FLAG_snapshot_asm_opt) __ AutoPatch(&osr_pc_offset_);
     shrink_slots -= static_cast<int>(OsrHelper(info()).UnoptimizedFrameSlots());
   }
 
@@ -2960,7 +2961,11 @@ void CodeGenerator::AssembleReturn(InstructionOperand* pop) {
   }
 }
 
-void CodeGenerator::FinishCode() {}
+void CodeGenerator::FinishCode() {
+  if (FLAG_snapshot_asm_opt) {
+    CodeOptimizer opt(this);
+  }
+}
 
 void CodeGenerator::AssembleMove(InstructionOperand* source,
                                  InstructionOperand* destination) {
