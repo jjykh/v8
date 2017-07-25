@@ -25,6 +25,10 @@
 namespace v8 {
 namespace internal {
 
+int Assembler::optimization_stage_ = 0;
+int Assembler::next_id_ = 0;
+std::vector<std::vector<uint32_t>> Assembler::all_instance_farjmp_bitmaps_;
+
 // -----------------------------------------------------------------------------
 // Implementation of CpuFeatures
 
@@ -326,7 +330,21 @@ Assembler::Assembler(IsolateData isolate_data, void* buffer, int buffer_size)
   }
 #endif
 
+  if (optimization_stage_) {
+    farjmp_num_ = 0;
+    id_ = next_id_++;
+    if (optimization_stage_ == 1) {
+      all_instance_farjmp_bitmaps_.push_back(std::vector<uint32_t>());
+    }
+  }
+
   reloc_info_writer.Reposition(buffer_ + buffer_size_, pc_);
+}
+
+void Assembler::set_snapshot_optimization(int stage) {
+  CHECK(stage >= 0 && stage <= 2);
+  optimization_stage_ = stage;
+  next_id_ = 0;
 }
 
 void Assembler::GetCode(Isolate* isolate, CodeDesc* desc) {
@@ -347,6 +365,22 @@ void Assembler::GetCode(Isolate* isolate, CodeDesc* desc) {
   desc->constant_pool_size = 0;
   desc->unwinding_info_size = 0;
   desc->unwinding_info = nullptr;
+
+  // In stage 1, update the bitmap
+  if (optimization_stage_ == 1) {
+    auto &bitmap = all_instance_farjmp_bitmaps_[id_];
+    size_t num = farjmp_positions_.size();
+    if (num && bitmap.empty()) {
+      bitmap.resize((num + 31)/32, 0);
+
+      for (size_t i = 0; i < num; i++) {
+        int diff = long_at(farjmp_positions_[i]);
+        if (diff >= -128 && diff <= 127 - 2) {
+          bitmap[i/32] |= 1 << (i & 31);
+        }
+      }
+    }
+  }
 }
 
 
@@ -417,6 +451,18 @@ void Assembler::bind_to(Label* L, int pos) {
       L->UnuseNear();
     }
   }
+  if (optimization_stage_ == 2) {
+    auto it = label_farjmp_maps_.find(L);
+    if (it != label_farjmp_maps_.end()) {
+      auto &pos_vector = it->second;
+      for (auto fixup_pos : pos_vector) {
+        int disp = pos - (fixup_pos + sizeof(int8_t));
+        CHECK(is_int8(disp));
+        set_byte_at(fixup_pos, disp);
+      }
+      label_farjmp_maps_.erase(it);
+    }
+  }
   L->bind_to(pos);
 }
 
@@ -425,6 +471,21 @@ void Assembler::bind(Label* L) {
   bind_to(L, pc_offset());
 }
 
+void Assembler::record_farjmp_position(Label *L, int pos)
+{
+  auto &pos_vector = label_farjmp_maps_[L];
+  pos_vector.push_back(pos);
+}
+
+bool Assembler::is_optimizable_farjmp(int idx) const
+{
+  if (predictable_code_size()) return false;
+
+  auto &bitmap = all_instance_farjmp_bitmaps_[id_];
+  CHECK((size_t)idx < bitmap.size() * 32);
+
+  return !!(bitmap[idx / 32] & (1 << (idx & 31)));
+}
 
 void Assembler::GrowBuffer() {
   DCHECK(buffer_overflow());
@@ -1284,19 +1345,31 @@ void Assembler::j(Condition cc, Label* L, Label::Distance distance) {
     }
     L->link_to(pc_offset(), Label::kNear);
     emit(disp);
-  } else if (L->is_linked()) {
-    // 0000 1111 1000 tttn #32-bit disp.
-    emit(0x0F);
-    emit(0x80 | cc);
-    emitl(L->pos());
-    L->link_to(pc_offset() - sizeof(int32_t));
   } else {
-    DCHECK(L->is_unused());
-    emit(0x0F);
-    emit(0x80 | cc);
-    int32_t current = pc_offset();
-    emitl(current);
-    L->link_to(current);
+    if (optimization_stage_ == 1) {
+      farjmp_positions_.push_back(pc_offset() + 2);
+    }
+    else if (optimization_stage_ == 2 && is_optimizable_farjmp(farjmp_num_++)) {
+      // 0111 tttn #8-bit disp
+      emit(0x70 | cc);
+      emit(0);
+      record_farjmp_position(L, pc_offset() - 1);
+      return;
+    }
+    if (L->is_linked()) {
+      // 0000 1111 1000 tttn #32-bit disp.
+      emit(0x0F);
+      emit(0x80 | cc);
+      emitl(L->pos());
+      L->link_to(pc_offset() - sizeof(int32_t));
+    } else {
+      DCHECK(L->is_unused());
+      emit(0x0F);
+      emit(0x80 | cc);
+      int32_t current = pc_offset();
+      emitl(current);
+      L->link_to(current);
+    }
   }
 }
 
@@ -1349,18 +1422,29 @@ void Assembler::jmp(Label* L, Label::Distance distance) {
     }
     L->link_to(pc_offset(), Label::kNear);
     emit(disp);
-  } else if (L->is_linked()) {
-    // 1110 1001 #32-bit disp.
-    emit(0xE9);
-    emitl(L->pos());
-    L->link_to(pc_offset() - long_size);
   } else {
-    // 1110 1001 #32-bit disp.
-    DCHECK(L->is_unused());
-    emit(0xE9);
-    int32_t current = pc_offset();
-    emitl(current);
-    L->link_to(current);
+    if (optimization_stage_ == 1) {
+      farjmp_positions_.push_back(pc_offset() + 1);
+    }
+    else if (optimization_stage_ == 2 && is_optimizable_farjmp(farjmp_num_++)) {
+      emit(0xEB);
+      emit(0);
+      record_farjmp_position(L, pc_offset() - 1);
+      return;
+    }
+    if (L->is_linked()) {
+      // 1110 1001 #32-bit disp.
+      emit(0xE9);
+      emitl(L->pos());
+      L->link_to(pc_offset() - long_size);
+    } else {
+      // 1110 1001 #32-bit disp.
+      DCHECK(L->is_unused());
+      emit(0xE9);
+      int32_t current = pc_offset();
+      emitl(current);
+      L->link_to(current);
+    }
   }
 }
 

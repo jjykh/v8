@@ -495,6 +495,9 @@ class Assembler : public AssemblerBase {
   // Assembler functions are invoked in between GetCode() calls.
   void GetCode(Isolate* isolate, CodeDesc* desc);
 
+  // This sets the optimization stage of snapshot, invoked by mksnapshot.
+  static void set_snapshot_optimization(int stage);
+
   // Read/Modify the code target in the relative branch/call instruction at pc.
   // On the x64 architecture, we use relative jumps with a 32-bit displacement
   // to jump to other Code objects in the Code space in the heap.
@@ -2491,6 +2494,10 @@ class Assembler : public AssemblerBase {
   void bmi2l(SIMDPrefix pp, byte op, Register reg, Register vreg,
              const Operand& rm);
 
+  // Snapshot optimization stage 2 - record the position of jmp/jcc instruction
+  void record_farjmp_position(Label *L, int pos);
+  bool is_optimizable_farjmp(int idx) const;
+
   friend class CodePatcher;
   friend class EnsureSpace;
   friend class RegExpMacroAssemblerX64;
@@ -2517,6 +2524,17 @@ class Assembler : public AssemblerBase {
   void AllocateAndInstallRequestedHeapObjects(Isolate* isolate);
 
   std::forward_list<HeapObjectRequest> heap_object_requests_;
+
+  // Multiple-stage optimization for snapshot
+  static int optimization_stage_;
+  static int next_id_;
+  static std::vector<std::vector<uint32_t>> all_instance_farjmp_bitmaps_;
+
+  // Variables for this instance of assembler
+  int id_;
+  int farjmp_num_;
+  std::deque<int> farjmp_positions_;
+  std::map<Label*, std::vector<int>> label_farjmp_maps_;
 };
 
 

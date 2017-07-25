@@ -8,6 +8,7 @@
 
 #include "include/libplatform/libplatform.h"
 #include "src/assembler.h"
+#include "src/macro-assembler.h"
 #include "src/base/platform/platform.h"
 #include "src/flags.h"
 #include "src/list.h"
@@ -172,7 +173,20 @@ int main(int argc, char** argv) {
     if (i::FLAG_startup_blob) writer.SetStartupBlobFile(i::FLAG_startup_blob);
 
     char* embed_script = GetExtraCode(argc >= 2 ? argv[1] : NULL, "embedding");
+
+#if V8_TARGET_ARCH_X64
+    i::Assembler::set_snapshot_optimization(1);
+#endif
+
     StartupData blob = v8::V8::CreateSnapshotDataBlob(embed_script);
+
+#if V8_TARGET_ARCH_X64
+    i::Assembler::set_snapshot_optimization(2);
+    delete[] blob.data;
+    blob = v8::V8::CreateSnapshotDataBlob(embed_script);
+    i::Assembler::set_snapshot_optimization(0);
+#endif
+
     delete[] embed_script;
 
     char* warmup_script = GetExtraCode(argc >= 3 ? argv[2] : NULL, "warm up");

@@ -301,11 +301,9 @@ void Deoptimizer::TableEntryGenerator::GeneratePrologue() {
   // Create a sequence of deoptimization entries.
   Label done;
   for (int i = 0; i < count(); i++) {
-    int start = masm()->pc_offset();
-    USE(start);
+    PredictableCodeSizeScope predictible_code_size_scope(masm(), table_entry_size_);
     __ pushq_imm32(i);
     __ jmp(&done);
-    DCHECK(masm()->pc_offset() - start == table_entry_size_);
   }
   __ bind(&done);
 }
