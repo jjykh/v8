@@ -56,7 +56,7 @@ class CodeGenerator final : public GapResolver::Assembler {
                          InstructionSequence* code, CompilationInfo* info);
 
   // Generate native code.
-  Handle<Code> GenerateCode();
+  Handle<Code> GenerateCode(void* asm_extra = nullptr);
 
   InstructionSequence* code() const { return code_; }
   FrameAccessState* frame_access_state() const { return frame_access_state_; }

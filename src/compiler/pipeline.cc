@@ -1455,7 +1455,26 @@ struct GenerateCodePhase {
   void Run(PipelineData* data, Zone* temp_zone, Linkage* linkage) {
     CodeGenerator generator(data->frame(), linkage, data->sequence(),
                             data->info());
+
+#if V8_TARGET_ARCH_X64
+    if (FLAG_snapshot_asm_opt) {
+      Assembler::ExtraInfo extra;
+      Handle<Code> code = generator.GenerateCode(&extra);
+
+      if (extra.optimizable()) {
+        CodeGenerator generator(data->frame(), linkage, data->sequence(),
+                            data->info());
+        extra.stage = 2;
+        code = generator.GenerateCode(&extra);
+      }
+      data->set_code(code);
+    }
+    else {
+      data->set_code(generator.GenerateCode());
+    }
+#else
     data->set_code(generator.GenerateCode());
+#endif
   }
 };
 

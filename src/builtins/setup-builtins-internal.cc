@@ -45,11 +45,36 @@ Code* BuildWithMacroAssembler(Isolate* isolate,
   byte buffer[buffer_size];  // NOLINT(runtime/arrays)
   MacroAssembler masm(isolate, buffer, buffer_size, CodeObjectRequired::kYes);
   DCHECK(!masm.has_frame());
+#if V8_TARGET_ARCH_X64
+  Assembler::ExtraInfo extra;
+  if (FLAG_snapshot_asm_opt)
+    masm.set_extra(&extra);
+#endif
+
   generator(&masm);
   CodeDesc desc;
   masm.GetCode(&desc);
-  Handle<Code> code =
+  Handle<Code> code;
+
+#if V8_TARGET_ARCH_X64
+  if (masm.update_extra()) {
+    MacroAssembler masm(isolate, buffer, buffer_size, CodeObjectRequired::kYes);
+    extra.stage = 2;
+    masm.set_extra(&extra);
+
+    DCHECK(!masm.has_frame());
+    generator(&masm);
+    masm.GetCode(&desc);
+    code = isolate->factory()->NewCode(desc, flags, masm.CodeObject());
+  }
+  else {
+    code =
       isolate->factory()->NewCode(desc, flags, masm.CodeObject());
+  }
+#else
+  code =
+      isolate->factory()->NewCode(desc, flags, masm.CodeObject());
+#endif
   PostBuildProfileAndTracing(isolate, *code, s_name);
   return *code;
 }

@@ -261,7 +261,8 @@ class V8_EXPORT_PRIVATE CompilationInfo final {
   }
 
   void set_prologue_offset(int prologue_offset) {
-    DCHECK_EQ(Code::kPrologueOffsetNotSet, prologue_offset_);
+    DCHECK(Code::kPrologueOffsetNotSet == prologue_offset_ ||
+            FLAG_snapshot_asm_opt);
     prologue_offset_ = prologue_offset;
   }
 

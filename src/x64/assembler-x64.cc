@@ -395,6 +395,21 @@ void Assembler::bind_to(Label* L, int pos) {
       L->UnuseNear();
     }
   }
+
+  auto ex = extra();
+  if (ex && ex->stage == 2) {
+    auto it = label_farjmp_map_.find(L);
+    if (it != label_farjmp_map_.end()) {
+      auto tmp_near_pos = it->second;
+      for (auto fixup_pos : *tmp_near_pos) {
+        int disp = pos - (fixup_pos + sizeof(int8_t));
+        CHECK(is_int8(disp));
+        set_byte_at(fixup_pos, disp);
+      }
+      delete tmp_near_pos;
+      label_farjmp_map_.erase(it);
+    }
+  }
   L->bind_to(pos);
 }
 
@@ -1214,6 +1229,37 @@ void Assembler::int3() {
   emit(0xCC);
 }
 
+bool Assembler::update_extra() {
+  auto e = extra();
+  if (!e || e->stage != 1) return false;
+
+  // Check optimizable far-jmp
+  size_t num_fj = farjmp_pos_.size();
+  e->optimizable_farjmp.resize(num_fj, false);
+
+  bool optable = false;
+
+  for (size_t i = 0; i < num_fj; i++) {
+    int diff = long_at(farjmp_pos_[i]);
+    if (is_int8(diff)) {
+      e->optimizable_farjmp[i] = true;
+      optable = true;
+    }
+  }
+
+  e->has_optimizable_farjmp = optable;
+  return optable;
+}
+
+void Assembler::record_near_jmp(Label *L, int32_t pos)
+{
+  std::vector<int>* tmp_near_pos = label_farjmp_map_[L];
+  if (!tmp_near_pos) {
+    tmp_near_pos = new std::vector<int>();
+    label_farjmp_map_[L] = tmp_near_pos;
+  }
+  tmp_near_pos->push_back(pos);
+}
 
 void Assembler::j(Condition cc, Label* L, Label::Distance distance) {
   if (cc == always) {
@@ -1259,19 +1305,37 @@ void Assembler::j(Condition cc, Label* L, Label::Distance distance) {
     }
     L->link_to(pc_offset(), Label::kNear);
     emit(disp);
-  } else if (L->is_linked()) {
-    // 0000 1111 1000 tttn #32-bit disp.
-    emit(0x0F);
-    emit(0x80 | cc);
-    emitl(L->pos());
-    L->link_to(pc_offset() - sizeof(int32_t));
   } else {
-    DCHECK(L->is_unused());
-    emit(0x0F);
-    emit(0x80 | cc);
-    int32_t current = pc_offset();
-    emitl(current);
-    L->link_to(current);
+    auto ex = extra();
+    if (ex) {
+      if (ex->stage == 1) {
+        farjmp_pos_.push_back(pc_offset() + 2);
+      }
+      else if (ex->stage == 2 && ex->optimizable_farjmp[farjmp_num_++]) {
+        // 0111 tttn #8-bit disp
+        emit(0x70 | cc);
+        int32_t current = pc_offset();
+        emit(0);
+
+        record_near_jmp(L, current);
+        return;
+      }
+    }
+
+    if (L->is_linked()) {
+      // 0000 1111 1000 tttn #32-bit disp.
+      emit(0x0F);
+      emit(0x80 | cc);
+      emitl(L->pos());
+      L->link_to(pc_offset() - sizeof(int32_t));
+    } else {
+      DCHECK(L->is_unused());
+      emit(0x0F);
+      emit(0x80 | cc);
+      int32_t current = pc_offset();
+      emitl(current);
+      L->link_to(current);
+    }
   }
 }
 
@@ -1324,18 +1388,35 @@ void Assembler::jmp(Label* L, Label::Distance distance) {
     }
     L->link_to(pc_offset(), Label::kNear);
     emit(disp);
-  } else if (L->is_linked()) {
-    // 1110 1001 #32-bit disp.
-    emit(0xE9);
-    emitl(L->pos());
-    L->link_to(pc_offset() - long_size);
   } else {
-    // 1110 1001 #32-bit disp.
-    DCHECK(L->is_unused());
-    emit(0xE9);
-    int32_t current = pc_offset();
-    emitl(current);
-    L->link_to(current);
+    auto ex = extra();
+    if (ex) {
+      if (ex->stage == 1) {
+        farjmp_pos_.push_back(pc_offset() + 1);
+      }
+      else if (ex->stage == 2 && ex->optimizable_farjmp[farjmp_num_++]) {
+        emit(0xEB);
+        int32_t current = pc_offset();
+        emit(0);
+
+        record_near_jmp(L, current);
+        return;
+      }
+    }
+
+    if (L->is_linked()) {
+      // 1110 1001 #32-bit disp.
+      emit(0xE9);
+      emitl(L->pos());
+      L->link_to(pc_offset() - long_size);
+    } else {
+      // 1110 1001 #32-bit disp.
+      DCHECK(L->is_unused());
+      emit(0xE9);
+      int32_t current = pc_offset();
+      emitl(current);
+      L->link_to(current);
+    }
   }
 }
 

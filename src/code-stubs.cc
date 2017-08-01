@@ -130,6 +130,12 @@ Handle<Code> PlatformCodeStub::GenerateCode() {
   // Generate the new code.
   MacroAssembler masm(isolate(), NULL, 256, CodeObjectRequired::kYes);
 
+#if V8_TARGET_ARCH_X64
+  Assembler::ExtraInfo extra;
+  if (FLAG_snapshot_asm_opt)
+    masm.set_extra(&extra);
+#endif
+
   {
     // Update the static counter each time a new code stub is generated.
     isolate()->counters()->code_stubs()->Increment();
@@ -147,8 +153,37 @@ Handle<Code> PlatformCodeStub::GenerateCode() {
   masm.GetCode(&desc);
   // Copy the generated code into a heap object.
   Code::Flags flags = Code::ComputeFlags(GetCodeKind(), GetExtraICState());
-  Handle<Code> new_object = factory->NewCode(
+  Handle<Code> new_object;
+
+#if V8_TARGET_ARCH_X64
+  if (masm.update_extra()) {
+    MacroAssembler masm(isolate(), NULL, 256, CodeObjectRequired::kYes);
+    extra.stage = 2;
+    masm.set_extra(&extra);
+
+    {
+      // Generate the code for the stub.
+      masm.set_generating_stub(true);
+      // TODO(yangguo): remove this once we can serialize IC stubs.
+      masm.enable_serializer();
+      NoCurrentFrameScope scope2(&masm);
+      Generate(&masm);
+    }
+
+    // Create the code object.
+    masm.GetCode(&desc);
+    // Copy the generated code into a heap object.
+    new_object = factory->NewCode(
+        desc, flags, masm.CodeObject(), NeedsImmovableCode());
+  }
+  else {
+    new_object = factory->NewCode(
+        desc, flags, masm.CodeObject(), NeedsImmovableCode());
+  }
+#else
+  new_object = factory->NewCode(
       desc, flags, masm.CodeObject(), NeedsImmovableCode());
+#endif
   return new_object;
 }
 
